@@ -568,6 +568,21 @@ void gru_step(const_flappie_matrix x, const_flappie_matrix istate,
 }
 
 
+float prev_state[256];
+int zeroes=0;
+static float df=0.0;
+static int steps=1;
+static int delta_counter[256]={0};
+static float acc_buff[768];
+float prev_x[512];
+void reset_acc_buff(){
+    for(int i=0; i<768; i++)
+	    acc_buff[i]=0.0;
+    for(int i=0; i<256; i++)
+	    prev_state[i]=0.0;
+}
+
+
 flappie_matrix grumod_forward(const_flappie_matrix X, const_flappie_matrix sW,
                                flappie_matrix ostate) {
     RETURN_NULL_IF(NULL == X, NULL);
@@ -598,6 +613,7 @@ flappie_matrix grumod_forward(const_flappie_matrix X, const_flappie_matrix sW,
     xCol.nc = sCol1.nc = sCol2.nc = 1;
     sCol1.data.v = ostate->data.v + ostate->nrq;
     sCol2.data.v = ostate->data.v;
+    reset_acc_buff();
     grumod_step(&xCol, &sCol1, sW, tmp, &sCol2);
     for (size_t i = 1; i < bsize; i++) {
         xCol.data.v = X->data.v + i * X->nrq;
@@ -644,6 +660,7 @@ flappie_matrix grumod_backward(const_flappie_matrix X, const_flappie_matrix sW,
     xCol.data.v = X->data.v + (X->nc - 1) * X->nrq;
     sCol1.data.v = ostate->data.v;
     sCol2.data.v = ostate->data.v + (ostate->nc - 1) * ostate->nrq;
+    reset_acc_buff();
     grumod_step(&xCol, &sCol1, sW, tmp, &sCol2);
     for (size_t i = 1; i < bsize; i++) {
         const size_t index = bsize - i - 1;
@@ -660,11 +677,86 @@ flappie_matrix grumod_backward(const_flappie_matrix X, const_flappie_matrix sW,
     return ostate;
 }
 
-float prev_state[256];
-int zeroes=0;
-static float df=0.0;
-static int steps=1;
-static int delta_counter[256]={0};
+void mat_mul_c_delta(float *a_rm, float *b_cm, float *c_in, float *c_out,
+                  uint32_t M, uint32_t N, uint32_t P,
+                  bool a_trans, bool b_trans, float alpha, float beta,
+                  uint32_t a_stride, uint32_t b_stride, uint32_t c_stride, float *prev_state)
+{
+    uint32_t a_inner_stride, a_outer_stride, b_inner_stride, b_outer_stride;
+    a_inner_stride = 1; a_outer_stride = a_stride;
+    b_inner_stride = 1; b_outer_stride = b_stride;
+    int ops=0;
+
+    for(uint32_t i = 0; i < M; i++) { // M = 768
+        for(uint32_t j = 0; j < P; j++) { // P = 1
+            const float *a  = a_rm + (a_outer_stride * i); // row selection
+            const float *b  = b_cm + (b_inner_stride * j); // col selection
+            uint32_t idx = (c_stride * i) + j;
+    	    int skipped=0;
+            for(uint32_t k = 0; k < N; k++) { // N = 256
+		float delta = b[k] - prev_state[k];   
+		if( (b_cm[i] < 0 && b_cm[i] > -0.1) || (b_cm[i] > 0 && b_cm[i] < 0.1) ) {
+                   acc_buff[idx] += a[k] * delta;
+	        }
+		else if (delta < 0 && delta > -0.1){
+		   skipped++;
+		}
+		else if (delta > 0 && delta < 0.1) {
+		   skipped++;
+		}
+		else { 
+                   acc_buff[idx] += a[k] * delta;
+		}
+                //acc_buff[idx] += a[k] * delta;
+            }
+	    //printf("%f ", acc_buff[idx]);
+            c_out[idx] = (beta * c_in[idx]) + (alpha * acc_buff[idx]);
+        }
+    }
+}
+
+
+void mat_mul_c(float *a_rm, float *b_cm, float *c_in, float *c_out,
+                  uint32_t M, uint32_t N, uint32_t P,
+                  bool a_trans, bool b_trans, float alpha, float beta,
+                  uint32_t a_stride, uint32_t b_stride, uint32_t c_stride, float *prev_state)
+{
+    uint32_t a_inner_stride, a_outer_stride, b_inner_stride, b_outer_stride;
+    a_inner_stride = 1; a_outer_stride = a_stride;
+    b_inner_stride = 1; b_outer_stride = b_stride;
+    int ops=0;
+
+    int skipped=0;
+    int flops=0;
+    for(uint32_t i = 0; i < M; i++) { // M = 768
+        for(uint32_t j = 0; j < P; j++) { // P = 1
+            float acc = 0;
+            const float *a  = a_rm + (a_outer_stride * i); // row selection
+            const float *b  = b_cm + (b_inner_stride * j); // col selection
+            uint32_t idx = (c_stride * i) + j;
+            for(uint32_t k = 0; k < N; k++) { // N = 256
+		float delta = b_cm[k] - prev_state[k];
+		if (delta < 0 && delta > -0.1){
+			//b_cm[k] = prev_state[k];
+			skipped++;
+		}
+		if (delta > 0 && delta < 0.1){
+			skipped++;
+			//b_cm[k] = prev_state[k];
+		}
+                acc += a[k * a_inner_stride] * b[k];
+		flops++;
+            }
+	    //printf("%f ",acc);
+            c_out[idx] = (beta * c_in[idx]) + (alpha * acc);
+        }
+    }
+    //printf("\n");
+    float df = (float)skipped/(float)flops;
+    printf("delta percentage=%f\n",df*100.0);
+    printf("total flops = %d saved flops = %d\n", flops, skipped);
+}
+
 
 void grumod_step(const_flappie_matrix x, const_flappie_matrix istate,
                  const_flappie_matrix sW, flappie_matrix xF,
@@ -697,11 +789,8 @@ void grumod_step(const_flappie_matrix x, const_flappie_matrix istate,
     /*  Add sW * istate to first 3 * size elts of xF
      *  then apply gate function to get r and z
      */
-    steps++;
+    /*steps++;
     zeroes = 0;
-    //int delta_counter[256] = {};
-    //for(int i = 0; i<256; i++)
-	//    delta_counter[i] = 1;
     	    
     for (size_t i = 0; i < size; i++) {
     	float delta = prev_state[i] - istate->data.f[i];
@@ -718,17 +807,16 @@ void grumod_step(const_flappie_matrix x, const_flappie_matrix istate,
 		zeroes++;
     	}
     }
-    df = df + (((float)zeroes/256.0)*100);
-    for(int i = 0; i<256; i++){
-	    //printf("%d ",delta_counter[i]);
-	    //printf("%f ",istate->data.f[i]);
-    }	    
-    //printf("this row has %d zeroes\n", zeroes);
-    //printf("\n");
-    //printf("istate cumulative average delta percentage=%f\n",df/steps);
+    df = df + (((float)zeroes/256.0)*100);*/
 
-    cblas_sgemv(CblasColMajor, CblasTrans, sW->nr, sW->nc, 1.0, sW->data.f,
-                sW->stride, istate->data.f, 1, 1.0, xF->data.f, 1);
+    //cblas_sgemv(CblasColMajor, CblasTrans, sW->nr, sW->nc, 1.0, sW->data.f,
+    //            sW->stride, istate->data.f, 1, 1.0, xF->data.f, 1);
+
+    //mat_mul_c(sW->data.f, istate->data.f,xF->data.f,xF->data.f, sW->nc, sW->nr, 1, 0,0, 1.0, 1.0, sW->nr, 1, 1, prev_state);
+    mat_mul_c_delta(sW->data.f, istate->data.f,xF->data.f,xF->data.f, sW->nc, sW->nr, 1, 0,0, 1.0, 1.0, sW->nr, 1, 1, prev_state);
+    for(int i=0;i<256;i++){
+	 prev_state[i] = istate->data.f[i];  
+    }
 
 #    define LOGISTICF fast_logisticf
 #    define TANHF fast_tanhf
