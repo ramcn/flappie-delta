@@ -664,6 +664,7 @@ float prev_state[256];
 int zeroes=0;
 static float df=0.0;
 static int steps=1;
+static int delta_counter[256]={0};
 
 void grumod_step(const_flappie_matrix x, const_flappie_matrix istate,
                  const_flappie_matrix sW, flappie_matrix xF,
@@ -698,19 +699,33 @@ void grumod_step(const_flappie_matrix x, const_flappie_matrix istate,
      */
     steps++;
     zeroes = 0;
+    //int delta_counter[256] = {};
+    //for(int i = 0; i<256; i++)
+	//    delta_counter[i] = 1;
+    	    
     for (size_t i = 0; i < size; i++) {
     	float delta = prev_state[i] - istate->data.f[i];
-    	if (delta < 0 && delta > -0.2){
-		istate->data.f[i] = prev_state[i];
+    	if (delta < 0 && delta > -0.1){
+		delta_counter[i]++;
+		//istate->data.f[i] = prev_state[i];
+		istate->data.f[i] = 0;
 		zeroes++;
     	}
-    	if (delta > 0 && delta < 0.2){
-		istate->data.f[i] = prev_state[i];
+    	if (delta > 0 && delta < 0.1){
+		delta_counter[i]++;
+		//istate->data.f[i] = prev_state[i];
+		istate->data.f[i] = 0;
 		zeroes++;
     	}
     }
     df = df + (((float)zeroes/256.0)*100);
-    printf("istate cumulative average delta percentage=%f\n",df/steps);
+    for(int i = 0; i<256; i++){
+	    //printf("%d ",delta_counter[i]);
+	    //printf("%f ",istate->data.f[i]);
+    }	    
+    //printf("this row has %d zeroes\n", zeroes);
+    //printf("\n");
+    //printf("istate cumulative average delta percentage=%f\n",df/steps);
 
     cblas_sgemv(CblasColMajor, CblasTrans, sW->nr, sW->nc, 1.0, sW->data.f,
                 sW->stride, istate->data.f, 1, 1.0, xF->data.f, 1);
