@@ -570,16 +570,17 @@ void gru_step(const_flappie_matrix x, const_flappie_matrix istate,
 
 float prev_state[256];
 int zeroes=0;
-static float df=0.0;
 static int steps=1;
 static int delta_counter[256]={0};
 static float acc_buff[768];
 float prev_x[512];
+int flag = 0;
 void reset_acc_buff(){
     for(int i=0; i<768; i++)
 	    acc_buff[i]=0.0;
     for(int i=0; i<256; i++)
 	    prev_state[i]=0.0;
+    flag = 0;
 }
 
 
@@ -685,34 +686,51 @@ void mat_mul_c_delta(float *a_rm, float *b_cm, float *c_in, float *c_out,
     uint32_t a_inner_stride, a_outer_stride, b_inner_stride, b_outer_stride;
     a_inner_stride = 1; a_outer_stride = a_stride;
     b_inner_stride = 1; b_outer_stride = b_stride;
-    int ops=0;
+    int skipped=0;
+    int flops=0;
+    int total_flops=0;
 
     for(uint32_t i = 0; i < M; i++) { // M = 768
         for(uint32_t j = 0; j < P; j++) { // P = 1
             const float *a  = a_rm + (a_outer_stride * i); // row selection
             const float *b  = b_cm + (b_inner_stride * j); // col selection
             uint32_t idx = (c_stride * i) + j;
-    	    int skipped=0;
+	    if(flag == 0)
+		acc_buff[idx] = 0;
             for(uint32_t k = 0; k < N; k++) { // N = 256
+	      if(flag){	    
 		float delta = b[k] - prev_state[k];   
-		if( (b_cm[i] < 0 && b_cm[i] > -0.1) || (b_cm[i] > 0 && b_cm[i] < 0.1) ) {
+		if( (b[k] < 0 && b[k] > -0.1) || (b[k] > 0 && b[k] < 0.1) ) {
                    acc_buff[idx] += a[k] * delta;
+		   flops++;
+		   total_flops++;
 	        }
 		else if (delta < 0 && delta > -0.1){
 		   skipped++;
+		   total_flops++;
 		}
 		else if (delta > 0 && delta < 0.1) {
 		   skipped++;
+		   total_flops++;
 		}
 		else { 
                    acc_buff[idx] += a[k] * delta;
+		   flops++;	
+		   total_flops++;
 		}
-                //acc_buff[idx] += a[k] * delta;
+	      }else {
+		   acc_buff[idx] += a[k] * b[k];
+		   flops ++;
+		   total_flops++;
+	      }	      
             }
-	    //printf("%f ", acc_buff[idx]);
             c_out[idx] = (beta * c_in[idx]) + (alpha * acc_buff[idx]);
         }
     }
+    float df = (float)skipped/(float)total_flops;
+    printf("delta percentage=%f\n",df*100.0);
+    printf("total flops = %d executed flops =%d skipped flops = %d\n", total_flops, flops, skipped);
+    flag = flag ^ 1;
 }
 
 
@@ -735,17 +753,22 @@ void mat_mul_c(float *a_rm, float *b_cm, float *c_in, float *c_out,
             const float *b  = b_cm + (b_inner_stride * j); // col selection
             uint32_t idx = (c_stride * i) + j;
             for(uint32_t k = 0; k < N; k++) { // N = 256
-		float delta = b_cm[k] - prev_state[k];
-		if (delta < 0 && delta > -0.1){
-			//b_cm[k] = prev_state[k];
+		float delta = b[k] - prev_state[k];
+		float mul = b[k];
+
+		if( (b[k] < 0 && b[k] > -0.1) || (b[k] > 0 && b[k] < 0.1) ) {
+		}
+		else if (delta < 0 && delta > -0.1){
+			mul = prev_state[k];
 			skipped++;
 		}
-		if (delta > 0 && delta < 0.1){
+		else if (delta > 0 && delta < 0.1){
 			skipped++;
-			//b_cm[k] = prev_state[k];
-		}
-                acc += a[k * a_inner_stride] * b[k];
+	 		mul = prev_state[k];
+		}	
+                acc += a[k * a_inner_stride] * mul;
 		flops++;
+	
             }
 	    //printf("%f ",acc);
             c_out[idx] = (beta * c_in[idx]) + (alpha * acc);
