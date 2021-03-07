@@ -570,8 +570,6 @@ void gru_step(const_flappie_matrix x, const_flappie_matrix istate,
 
 float prev_state[256];
 int zeroes=0;
-static int steps=1;
-static int delta_counter[256]={0};
 static float acc_buff[768];
 float prev_x[512];
 int flag = 0;
@@ -683,9 +681,9 @@ void mat_mul_c_delta(float *a_rm, float *b_cm, float *c_in, float *c_out,
                   bool a_trans, bool b_trans, float alpha, float beta,
                   uint32_t a_stride, uint32_t b_stride, uint32_t c_stride, float *prev_state)
 {
-    uint32_t a_inner_stride, a_outer_stride, b_inner_stride, b_outer_stride;
-    a_inner_stride = 1; a_outer_stride = a_stride;
-    b_inner_stride = 1; b_outer_stride = b_stride;
+    uint32_t a_outer_stride, b_inner_stride;
+    a_outer_stride = a_stride;
+    b_inner_stride = 1; 
     int skipped=0;
     int flops=0;
     int total_flops=0;
@@ -739,10 +737,9 @@ void mat_mul_c(float *a_rm, float *b_cm, float *c_in, float *c_out,
                   bool a_trans, bool b_trans, float alpha, float beta,
                   uint32_t a_stride, uint32_t b_stride, uint32_t c_stride, float *prev_state)
 {
-    uint32_t a_inner_stride, a_outer_stride, b_inner_stride, b_outer_stride;
-    a_inner_stride = 1; a_outer_stride = a_stride;
-    b_inner_stride = 1; b_outer_stride = b_stride;
-    int ops=0;
+    uint32_t a_outer_stride, b_inner_stride;
+    a_outer_stride = a_stride;
+    b_inner_stride = 1;
 
     int skipped=0;
     int flops=0;
@@ -766,7 +763,7 @@ void mat_mul_c(float *a_rm, float *b_cm, float *c_in, float *c_out,
 			skipped++;
 	 		mul = prev_state[k];
 		}	
-                acc += a[k * a_inner_stride] * mul;
+                acc += a[k] * mul;
 		flops++;
 	
             }
@@ -861,7 +858,7 @@ void grumod_step(const_flappie_matrix x, const_flappie_matrix istate,
     for (size_t i = 0; i < size; i++) {
         c[i] = TANHF(c[i]);
     }
-    const float ones = 1.0f;
+    //const float ones = 1.0f;
     float *c1 = ostate->data.f;
     for (size_t i = 0; i < size ; i++) {
         c1[i] = (-1) * z[i] * c[i] + c[i]; // cin and cout are different. alpha is -1.
