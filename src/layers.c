@@ -628,6 +628,8 @@ flappie_matrix grumod_forward(const_flappie_matrix X, const_flappie_matrix sW,
     return ostate;
 }
 
+float cumulative_delta=0.0;
+float steps = 0.0;
 
 flappie_matrix grumod_backward(const_flappie_matrix X, const_flappie_matrix sW,
                                 flappie_matrix ostate) {
@@ -673,8 +675,11 @@ flappie_matrix grumod_backward(const_flappie_matrix X, const_flappie_matrix sW,
 
     assert(validate_flappie_matrix
            (ostate, -1.0, 1.0, 0.0, true, __FILE__, __LINE__));
+
+    printf("\ncumulative delta or percentage of MAC ops saved=%f\n", (cumulative_delta/steps)*100);
     return ostate;
 }
+
 
 void mat_mul_c_delta(float *a_rm, float *b_cm, float *c_in, float *c_out,
                   uint32_t M, uint32_t N, uint32_t P,
@@ -729,6 +734,8 @@ void mat_mul_c_delta(float *a_rm, float *b_cm, float *c_in, float *c_out,
     printf("delta percentage=%f\n",df*100.0);
     printf("total flops = %d executed flops =%d skipped flops = %d\n", total_flops, flops, skipped);
     flag = flag ^ 1;
+    cumulative_delta += df;
+    steps++;
 }
 
 
